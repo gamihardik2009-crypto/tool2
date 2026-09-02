@@ -28,14 +28,23 @@ def _run_action(index: int) -> None:
             except (ValueError, IndexError): print("Invalid profile."); return
             cmd_connect(type("Args", (), {"host": profile.host, "user": profile.username, "port": profile.port, "alias": profile.alias})())
             return
-        user = input("VPS SSH username [root]: ").strip() or "root"
-        port_text = input("SSH port [22]: ").strip() or "22"
-        try:
-            port = int(port_text)
-        except ValueError:
-            print("SSH port must be a number.")
+        user = input("VPS SSH username: ").strip()
+        if not user:
+            print("SSH username is required.")
             return
-        cmd_connect(type("Args", (), {"host": host, "user": user, "port": port})())
+        for port in (22, 8022, 2222):
+            print(f"Trying SSH port {port}...")
+            args = type("Args", (), {"host": host, "user": user, "port": port})()
+            from .remote import Remote, save_profile, ConnectionProfile
+            try:
+                with Remote(ConnectionProfile(host, user, port)):
+                    save_profile(ConnectionProfile(host, user, port))
+                print(f"Connected on port {port}.")
+                return
+            except Exception:
+                continue
+        print("Could not connect on ports 22, 8022, or 2222.")
+        return
     elif index == 2:
         from .cli import cmd_creds
         cmd_creds(type("Args", (), {"token": None, "chat_id": None})())
@@ -79,7 +88,7 @@ def _draw_status(stdscr, report: dict, selection: int) -> None:
 
 
 def _main(stdscr) -> None:
-    curses.curs_set(0); curses.start_color(); curses.use_default_colors()
+    curses.curs_set(0); stdscr.keypad(True); curses.start_color(); curses.use_default_colors()
     curses.init_pair(1, curses.COLOR_RED, -1); curses.init_pair(2, curses.COLOR_GREEN, -1)
     selection = 0
     while True:
