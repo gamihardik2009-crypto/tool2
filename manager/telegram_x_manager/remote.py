@@ -35,6 +35,9 @@ class ConnectionProfile:
     alias: str = ""
 
 def find_profiles_for_host(host: str) -> list[ConnectionProfile]:
+    host = host.strip()
+    if not host:
+        return []
     cfg = Path.home() / ".ssh" / "config"
     if not cfg.is_file(): return []
     result = []
@@ -44,7 +47,9 @@ def find_profiles_for_host(host: str) -> list[ConnectionProfile]:
         try:
             raw = subprocess.check_output(["ssh", "-G", p[1]], text=True, stderr=subprocess.DEVNULL, timeout=5)
             vals = dict(x.split(None, 1) for x in raw.splitlines() if len(x.split(None, 1)) == 2)
-            if vals.get("hostname") == host: result.append(ConnectionProfile(host, vals.get("user", ""), int(vals.get("port", 22)), p[1]))
+            resolved = vals.get("hostname", p[1])
+            if resolved.lower() == host.lower() or p[1].lower() == host.lower():
+                result.append(ConnectionProfile(resolved, vals.get("user", ""), int(vals.get("port", 22)), p[1]))
         except Exception: pass
     return result
 

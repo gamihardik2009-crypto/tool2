@@ -64,7 +64,7 @@ def _run_action(index: int) -> None:
 
 def _draw_status(stdscr, report: dict, selection: int) -> None:
     stdscr.addstr(0, 2, "Telegram-X Manager", curses.A_BOLD)
-    stdscr.addstr(1, 2, "Up/Down: select   Enter: open   Esc: back/refresh   Q: quit")
+    stdscr.addstr(1, 2, "Up/Down: select   Enter: open   R: refresh   Q: quit")
     t, x, w = report.get("telegram", {}), report.get("x_session", {}), report.get("workflow", {})
     bp = report.get("browser_profile", {})
     service = str(w.get("service", "")); health = (w.get("health") or {}).get("status", "")
@@ -91,20 +91,44 @@ def _main(stdscr) -> None:
     curses.curs_set(0); stdscr.keypad(True); curses.start_color(); curses.use_default_colors()
     curses.init_pair(1, curses.COLOR_RED, -1); curses.init_pair(2, curses.COLOR_GREEN, -1)
     selection = 0
+    report = {}
     while True:
-        report = __import__("telegram_x_manager.health", fromlist=["run_checks"]).run_checks()
         stdscr.clear(); _draw_status(stdscr, report, selection); stdscr.refresh()
         key = stdscr.getch()
-        if key in (ord("q"), ord("Q"), 27):
+        if key == 27:
+            # Some terminals deliver arrow keys as three separate bytes.
+            stdscr.timeout(100)
+            second, third = stdscr.getch(), stdscr.getch()
+            stdscr.timeout(-1)
+            if second == ord("[") and third == ord("A"):
+                key = curses.KEY_UP
+            elif second == ord("[") and third == ord("B"):
+                key = curses.KEY_DOWN
+            else:
+                continue
+        if key in (ord("q"), ord("Q")):
             return
         if key in (curses.KEY_UP, ord("k")): selection = (selection - 1) % len(ITEMS)
         elif key in (curses.KEY_DOWN, ord("j")): selection = (selection + 1) % len(ITEMS)
+        elif key in (ord("r"), ord("R")):
+            curses.endwin()
+            print("Refreshing status...")
+            report = __import__("telegram_x_manager.health", fromlist=["run_checks"]).run_checks()
+            input("Press Enter to return to the TUI...")
         elif key in (10, 13, curses.KEY_ENTER):
             if selection == len(ITEMS) - 1: return
             curses.endwin()
+            print("\nProcess is running. Please wait; terminal input is paused until it finishes...\n")
             try: _run_action(selection)
             except Exception as exc: print(f"Error: {exc}")
-            input("\nPress Enter to return to the TUI...")
+            # X login uses a separate browser and can return directly. Requiring
+            # a terminal Enter here is unreliable while Chrome has focus.
+            if selection != 3:
+                input("\nPress Enter to return to the TUI...")
+            try:
+                report = __import__("telegram_x_manager.health", fromlist=["run_checks"]).run_checks()
+            except Exception:
+                report = {}
 
 
 def run() -> int:

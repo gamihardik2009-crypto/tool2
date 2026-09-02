@@ -226,8 +226,9 @@ def cmd_history(args) -> int:
 
 
 def cmd_tui(_args) -> int:
-    from .tui import run
-    return run()
+    from .web import run
+    run()
+    return 0
 
 
 def cmd_control(args) -> int:
