@@ -22,7 +22,6 @@ class FormScreen(ModalScreen[dict[str, str] | None]):
                 yield Input(placeholder="Host or SSH alias", id="host")
                 yield Input(placeholder="Username (for example root)", id="username")
                 yield Input(value="22", placeholder="Port", id="port")
-                yield Input(placeholder="Password (optional)", password=True, id="password")
             else:
                 yield Input(placeholder="Bot token", password=True, id="token")
                 yield Input(placeholder="Chat ID (optional)", id="chat_id")
@@ -51,7 +50,7 @@ class FormScreen(ModalScreen[dict[str, str] | None]):
         if event.button.id == "cancel":
             self.dismiss(None)
             return
-        ids = ("host", "username", "port", "password") if self.kind == "ssh" else ("token", "chat_id")
+        ids = ("host", "username", "port") if self.kind == "ssh" else ("token", "chat_id")
         values = {key: self.query_one(f"#{key}", Input).value.strip() for key in ids}
         if self.kind == "ssh":
             values["username"] = values["username"] or "root"
@@ -95,6 +94,7 @@ class ManagerApp(App):
                 yield self.card("Telegram", "Checking...", "Validating bot token", "telegram")
                 yield self.card("X session", "Checking...", "Checking login session", "x")
                 yield self.card("SSH + worker", "Checking...", "Looking for target", "workflow")
+                yield self.card("Chrome profile", "Checking...", "Dedicated login profile", "browser")
             with Horizontal(id="actions"):
                 yield Button("SSH connection", id="connect", variant="primary")
                 yield Button("Telegram token", id="credentials")
@@ -122,13 +122,14 @@ class ManagerApp(App):
         from .health import run_checks
         self.call_from_thread(self.message, "Refreshing Telegram, X, SSH and worker status...")
         report = run_checks()
-        t, x, w = report["telegram"], report["x_session"], report["workflow"]
+        t, x, w, bp = report["telegram"], report["x_session"], report["workflow"], report.get("browser_profile", {})
         service = str(w.get("service") or "not running")
         running = service == "active" or service.startswith("running")
         cards = {
             "telegram": ("Telegram", "[green]Connected[/green]" if t.get("ok") else "[red]Needs setup[/red]", t.get("detail", "")),
             "x": ("X session", "[green]Connected[/green]" if x.get("ok") else "[red]Needs login[/red]", x.get("detail", "")),
             "workflow": ("SSH + worker", "[green]Worker running[/green]" if running else ("[yellow]SSH connected[/yellow]" if w.get("connected") else "[red]Not connected[/red]"), f"{w.get('username', '')}@{w.get('host', '')}" if w.get("connected") else w.get("detail", "Add SSH connection")),
+            "browser": ("Chrome profile", "[green]Ready[/green]" if bp.get("exists") else "[yellow]Not created[/yellow]", bp.get("path", "Dedicated X login profile")),
         }
         for ident, (title, value, detail) in cards.items():
             text = f"[status-title]{title}[/]\n[status-value]{value}[/]\n[status-detail]{detail}[/]"
@@ -158,15 +159,12 @@ class ManagerApp(App):
 
     @work(thread=True)
     def connect_ssh(self, values: dict[str, str]) -> None:
-        from .remote import ConnectionProfile, bootstrap, save_profile, verify_connection
+        from .remote import ConnectionProfile, save_profile, verify_connection
         self.call_from_thread(self.message, "Connecting over SSH...")
         try:
             profile = ConnectionProfile(values["host"], values["username"], int(values["port"]))
-            if values["password"]:
-                bootstrap(profile.host, profile.port, profile.username, values["password"])
-            else:
-                verify_connection(profile)
-                save_profile(profile)
+            verify_connection(profile)
+            save_profile(profile)
             activity.record("connect", True, f"connected to {profile.username}@{profile.host}")
             self.call_from_thread(self.message, "SSH connection saved successfully.")
             self.refresh_status()
@@ -215,5 +213,45 @@ class ManagerApp(App):
 
 
 def run() -> int:
-    ManagerApp().run()
-    return 0
+    """Run a small dependency-light terminal menu for the manager."""
+    from .health import render, run_checks
+    from .worker import WorkerController
+
+    while True:
+        print("\nTelegram-X Manager")
+        print("1) Refresh status   2) SSH connect   3) Telegram token")
+        print("4) X login          5) Deploy         6) Sync credentials")
+        print("7) Start/stop worker 8) Open VPS terminal  0) Exit")
+        choice = input("> ").strip()
+        try:
+            if choice == "0":
+                return 0
+            if choice == "1":
+                print(render(run_checks()))
+            elif choice == "2":
+                from .cli import cmd_connect
+                cmd_connect(type("Args", (), {"host": None, "user": None, "port": 22})())
+            elif choice == "3":
+                from .cli import cmd_creds
+                cmd_creds(type("Args", (), {"token": None, "chat_id": None})())
+            elif choice == "4":
+                from .cli import cmd_xlogin
+                cmd_xlogin(type("Args", (), {"session": None, "port": None, "max_wait": 300.0, "browser": None})())
+            elif choice == "5":
+                print(WorkerController().deploy())
+            elif choice == "6":
+                print(WorkerController().sync_credentials())
+            elif choice == "7":
+                current = run_checks().get("workflow", {}).get("service", "")
+                action = "stop" if str(current).startswith(("running", "active")) else "start"
+                print(WorkerController().run_action(action))
+            elif choice == "8":
+                from .cli import cmd_terminal
+                return cmd_terminal(None)
+            else:
+                print("Choose a number from 0 to 7.")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        except Exception as exc:
+            print(f"Error: {exc}")

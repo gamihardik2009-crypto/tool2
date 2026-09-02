@@ -50,21 +50,12 @@ def add_connect_parser(sub) -> None:
     p.add_argument("--host", help="VPS IP or hostname")
     p.add_argument("--user", help="VPS SSH username")
     p.add_argument("--port", type=int, default=22)
-    g = p.add_mutually_exclusive_group()
-    g.add_argument("--password", help="VPS SSH password (auto-installs the manager key)")
-    g.add_argument("--key", help="Path to an existing private key / .pem (cloud VPS)")
-    p.add_argument("--manual", action="store_true",
-                   help="Print ready-to-run instructions to authorize the manager key manually")
     p.set_defaults(func=cmd_connect)
 
 
 def cmd_connect(args) -> int:
-    from pathlib import Path as _Path
     from . import activity
-    from .remote import (
-        ConnectionProfile, bootstrap, save_profile,
-        verify_connection, manual_instructions,
-    )
+    from .remote import ConnectionProfile, save_profile, verify_connection
 
     try:
         host = args.host or input("VPS IP/hostname: ").strip()
@@ -74,54 +65,16 @@ def cmd_connect(args) -> int:
         port = args.port or 22
         profile = ConnectionProfile(host=host, username=user, port=port)
 
-        if args.manual:
-            # Mode 3: no password/key shared — user (or VPS AI agent) runs a command once.
-            save_profile(profile)
-            print(manual_instructions())
-            print("Key-based SSH is set up on this PC. Run the command above on the")
-            print("VPS once, then run `status` to confirm the connection works.")
-            activity.record("connect", True, f"manual setup prepared for {user}@{host}")
-            return 0
-
-        if args.key:
-            # Mode 2: existing key file (cloud providers, e.g. .pem).
-            key_path = _Path(args.key).expanduser()
-            if not key_path.is_file():
-                raise SystemExit(f"Key file not found: {key_path}")
-            save_profile(profile)
-            username = verify_connection(profile, key_filename=str(key_path))
-            activity.record("connect", True, f"linked via key file to {user}@{host}")
-            print(f"✅ Connected to {username}@{host} using your key file.")
-            print("Next: run `creds` to add your Telegram token, then `deploy`.")
-            return 0
-
-        # Reuse an existing SSH config alias/key when available (for example
-        # `ssh termux`), avoiding an unnecessary password bootstrap.
-        if not args.password:
-            try:
-                username = verify_connection(profile)
-            except Exception:
-                pass
-            else:
-                save_profile(profile)
-                activity.record("connect", True, f"linked via existing SSH config to {user}@{host}")
-                print(f"✅ Connected to {username}@{host} using your SSH config key.")
-                print("Next: run `creds` to add your Telegram token, then `deploy`.")
-                return 0
-
-        # Mode 1: password auto-bootstrap.
-        bootstrap(host=host, port=port, username=user,
-                  password=args.password or None)
-        activity.record("connect", True, f"linked to {user}@{host} (key installed)")
-        print(f"\n✅ Connected and linked to {user}@{host}.")
-        print("Key-based SSH is now set up — you won't need the password again.")
-        print("Next: run `creds` to add your Telegram token, then `deploy`.")
+        username = verify_connection(profile)
+        save_profile(profile)
+        activity.record("connect", True, f"verified existing SSH connection to {user}@{host}")
+        print(f"✅ Existing SSH connection verified for {username}@{host}:{port}.")
+        print("Next: run `creds`, `xlogin`, then `deploy` or `sync`.")
         return 0
     except Exception as exc:
         activity.record("connect", False, str(exc))
         print(f"❌ connect failed: {exc}")
-        print("Check that the host is reachable and port 22 is open. If your VPS")
-        print("doesn't accept passwords, use `--key /path/to/key.pem` or `--manual`.")
+        print("Check that the host, username, port, and existing SSH key/config are correct.")
         return 1
 
 
@@ -178,6 +131,22 @@ def add_status_parser(sub) -> None:
     p = sub.add_parser("status", help="Quickly test the SSH connection to the VPS")
     p.set_defaults(func=cmd_status)
 
+def add_terminal_parser(sub) -> None:
+    p = sub.add_parser("terminal", help="Open an interactive terminal on the VPS")
+    p.set_defaults(func=cmd_terminal)
+
+def cmd_terminal(_args) -> int:
+    from .remote import Remote, load_profile
+    profile = load_profile()
+    if profile is None:
+        print("Not connected - run `connect` first.")
+        return 1
+    try:
+        return Remote(profile).interactive()
+    except Exception as exc:
+        print(f"Could not open VPS terminal: {exc}")
+        return 1
+
 
 def cmd_status(_args) -> int:
     from . import activity
@@ -228,6 +197,19 @@ def add_control_parser(sub) -> None:
     p.add_argument("--lines", type=int, default=50, help="lines for `logs`")
     p.set_defaults(func=cmd_control)
 
+def add_sync_parser(sub) -> None:
+    p = sub.add_parser("sync", help="Send Telegram and X credentials to the worker over SSH")
+    p.set_defaults(func=cmd_sync)
+
+def cmd_sync(_args) -> int:
+    from .worker import WorkerController
+    try:
+        print(WorkerController().sync_credentials())
+        return 0
+    except Exception as exc:
+        print(f"❌ sync failed: {exc}")
+        return 1
+
 
 def add_history_parser(sub) -> None:
     p = sub.add_parser("history", help="Show recent manager activity")
@@ -274,13 +256,17 @@ def build_parser() -> argparse.ArgumentParser:
     add_creds_parser(sub)
     add_health_parser(sub)
     add_status_parser(sub)
+    add_terminal_parser(sub)
     add_deploy_parser(sub)
     add_control_parser(sub)
+    add_sync_parser(sub)
     add_history_parser(sub)
     sub.add_parser("tui", help="Open the interactive terminal interface").set_defaults(func=cmd_tui)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None and not __import__('sys').argv[1:]:
+        return cmd_tui(None)
     args = build_parser().parse_args(argv)
     return int(args.func(args))

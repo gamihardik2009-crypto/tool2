@@ -126,6 +126,27 @@ class WorkerController:
 
         return out
 
+    def sync_credentials(self, token: str | None = None, chat_id: str | None = None,
+                         session_path: Path | None = None) -> str:
+        """Update the running worker's .env and X session over SSH."""
+        token = token if token is not None else creds.bot_token()
+        if not token:
+            raise RemoteError("No Telegram bot token stored. Run `creds` first.")
+        session_path = session_path or config.session_file_path()
+        if not session_path.is_file():
+            raise RemoteError("X session not found. Run `xlogin` first.")
+        remote = Remote(); remote.open()
+        try:
+            self._mkdirs(remote)
+            remote.put_bytes(_worker_env(token, chat_id or creds.chat_id()).encode(), f"{self.remote_dir}/.env")
+            remote.put_bytes(session_path.read_bytes(), f"{self.remote_dir}/data/x-session.json")
+            code, out = self._r(remote, f"chmod 600 {self.remote_dir}/.env {self.remote_dir}/data/x-session.json && cd {self.remote_dir} && sh run.sh stop >/dev/null 2>&1 || true; cd {self.remote_dir} && sh run.sh start")
+            if code != 0:
+                raise RemoteError(out)
+            return "Credentials synced to the worker and worker restarted."
+        finally:
+            remote.close()
+
     def _mkdirs(self, remote: Remote) -> None:
         self._r(remote, f"mkdir -p {self.remote_dir}/data")
 

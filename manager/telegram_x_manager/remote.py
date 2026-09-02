@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import getpass
 import os
+import subprocess
+import tempfile
 from dataclasses import dataclass, asdict
 from pathlib import Path
-
-import paramiko
 
 from . import config
 
@@ -55,11 +55,9 @@ def save_profile(profile: ConnectionProfile, path: Path | None = None) -> None:
 def ensure_keypair() -> tuple[Path, str]:
     """Generate an SSH keypair in the manager config dir.
 
-    Uses RSA: its `.generate()` is stable across all paramiko versions (paramiko
-    5.x changed the Ed25519 generation API) and RSA is universally accepted by
-    OpenSSH servers. Returns (privkey_path, public_key_line). Reuses an existing
-    key if present.
+    Legacy helper retained for compatibility; native OpenSSH handles keys now.
     """
+    raise RemoteError("Manager-managed key generation is disabled; use your existing SSH key/config.")
     priv = config.ssh_key_path()
     pub = config.ssh_pub_key_path()
     if not priv.exists():
@@ -86,7 +84,7 @@ def quote(value: str) -> str:
 
 
 class Remote:
-    """A thin Paramiko client bound to the saved profile + manager key."""
+    """Native OpenSSH transport bound to the saved profile."""
 
     def __init__(self, profile: ConnectionProfile | None = None,
                  password: str | None = None, key_filename: str | None = None) -> None:
@@ -95,7 +93,7 @@ class Remote:
             raise RemoteError("No connection profile. Run the `connect` command first.")
         self.password = password
         self.key_filename = key_filename
-        self.client: paramiko.SSHClient | None = None
+        self.client = False
         self._home: str | None = None
 
     def home(self) -> str:
@@ -133,43 +131,18 @@ class Remote:
         Lets users reuse aliases they already have (`ssh termux`), including
         custom ports and identity files.
         """
-        cfg_path = Path.home() / ".ssh" / "config"
-        if not cfg_path.is_file():
-            return
-        try:
-            cfg = paramiko.config.SSHConfig()
-            with open(cfg_path, encoding="utf-8") as handle:
-                cfg.parse(handle)
-            if self.profile.host not in cfg.get_hostnames():
-                return
-            entry = cfg.lookup(self.profile.host)
-            if entry.get("hostname"):
-                self.profile.host = entry["hostname"]
-            if entry.get("port"):
-                try:
-                    self.profile.port = int(entry["port"])
-                except (TypeError, ValueError):
-                    pass
-            if entry.get("user") and (not self.profile.username or self.profile.username == getpass.getuser()):
-                self.profile.username = entry["user"]
-            files = entry.get("identityfile") or []
-            if files and not self.key_filename:
-                self.key_filename = files[0]
-        except Exception:
-            pass
+        # SSH config parsing is delegated to OpenSSH itself.
+        return
 
     def open(self) -> None:
-        self._resolve_ssh_config()
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(self.profile.host, port=self.profile.port,
-                       **self._connect_kwargs())
-        self.client = client
+        # Validate the connection immediately; subsequent operations reuse SSH config/keys.
+        code, out = self.run("true")
+        if code != 0:
+            raise RemoteError(out or "SSH connection failed.")
+        self.client = True
 
     def close(self) -> None:
-        if self.client:
-            self.client.close()
-            self.client = None
+        self.client = False
 
     def __enter__(self) -> "Remote":
         self.open()
@@ -180,33 +153,46 @@ class Remote:
 
     def run(self, command: str, timeout: float = 30) -> tuple[int, str]:
         """Run a remote command; returns (exit_status, combined_output)."""
-        if self.client is None:
-            raise RemoteError("Not connected.")
-        stdin, stdout, stderr = self.client.exec_command(command, timeout=timeout)
-        out = stdout.read().decode("utf-8", "replace")
-        err = stderr.read().decode("utf-8", "replace")
-        code = stdout.channel.recv_exit_status()
-        return code, (out + err).strip()
+        target = f"{self.profile.username}@{self.profile.host}"
+        args = ["ssh", "-p", str(self.profile.port), "-o", "BatchMode=yes", target, command]
+        try:
+            proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RemoteError(f"SSH command failed: {exc}") from exc
+        return proc.returncode, (proc.stdout + proc.stderr).strip()
+
+    def interactive(self) -> int:
+        """Replace this process with an interactive native SSH terminal."""
+        target = f"{self.profile.username}@{self.profile.host}"
+        args = ["ssh", "-p", str(self.profile.port), target]
+        try:
+            return subprocess.call(args)
+        except OSError as exc:
+            raise RemoteError(f"Could not start ssh: {exc}") from exc
 
     def put_bytes(self, data: bytes, remote_path: str) -> None:
-        if self.client is None:
-            raise RemoteError("Not connected.")
-        sftp = self.client.open_sftp()
+        target = f"{self.profile.username}@{self.profile.host}:{self._abs(remote_path)}"
+        temporary = None
         try:
-            with sftp.file(self._abs(remote_path), "wb") as handle:
-                handle.write(data)
+            temporary = tempfile.NamedTemporaryFile(delete=False)
+            temporary.write(data); temporary.close()
+            proc = subprocess.run(["scp", "-P", str(self.profile.port), "-o", "BatchMode=yes", temporary.name, target], capture_output=True, text=True, timeout=30)
+            if proc.returncode:
+                raise RemoteError((proc.stdout + proc.stderr).strip() or "scp upload failed")
         finally:
-            sftp.close()
+            if temporary:
+                os.unlink(temporary.name)
 
     def download(self, remote_path: str, timeout: float = 15) -> str:
-        if self.client is None:
-            raise RemoteError("Not connected.")
-        sftp = self.client.open_sftp()
+        source = f"{self.profile.username}@{self.profile.host}:{self._abs(remote_path)}"
+        temporary = tempfile.NamedTemporaryFile(delete=False); temporary.close()
         try:
-            with sftp.file(self._abs(remote_path), "rb") as handle:
-                return handle.read().decode("utf-8", "replace")
+            proc = subprocess.run(["scp", "-P", str(self.profile.port), "-o", "BatchMode=yes", source, temporary.name], capture_output=True, timeout=30)
+            if proc.returncode:
+                raise RemoteError(proc.stderr.decode(errors="replace") or "scp download failed")
+            return Path(temporary.name).read_text(encoding="utf-8")
         finally:
-            sftp.close()
+            os.unlink(temporary.name)
 
 
 def bootstrap(host: str, port: int, username: str,

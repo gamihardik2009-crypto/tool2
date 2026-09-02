@@ -109,6 +109,10 @@ def run_checks() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "telegram": check_telegram(),
         "x_session": check_x_session(),
+        "browser_profile": {
+            "exists": config.browser_profile_dir().is_dir(),
+            "path": str(config.browser_profile_dir()),
+        },
         "workflow": check_workflow(),
         "activity_history": activity.history(limit=activity.DEFAULT_LIMIT),
     }
@@ -126,6 +130,11 @@ def render(report: dict) -> str:
     x = report["x_session"]
     lines.append("X session")
     lines.append(f"  {'✅ valid — ' + x['detail'] if x.get('ok') else '❌ ' + x['detail']}")
+    lines.append("")
+
+    bp = report.get("browser_profile", {})
+    lines.append("Manager Chrome profile")
+    lines.append(f"  {'✅ ready' if bp.get('exists') else '⚠ not created yet'} ({bp.get('path', '')})")
     lines.append("")
 
     w = report["workflow"]

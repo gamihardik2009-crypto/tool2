@@ -1,5 +1,4 @@
 # Manager dependencies (installed into a local .venv by `./setup.sh`)
 playwright>=1.44,<2
 tweetkit-x==0.3.0
-paramiko>=3.4,<6
 textual>=0.70,<2
