@@ -242,8 +242,10 @@ def run() -> int:
             elif choice == "6":
                 print(WorkerController().sync_credentials())
             elif choice == "7":
-                current = run_checks().get("workflow", {}).get("service", "")
-                action = "stop" if str(current).startswith(("running", "active")) else "start"
+                workflow = run_checks().get("workflow", {})
+                current = str(workflow.get("service", ""))
+                health_status = str((workflow.get("health") or {}).get("status", ""))
+                action = "stop" if (current.startswith(("running", "active")) or health_status == "running") else "start"
                 print(WorkerController().run_action(action))
             elif choice == "8":
                 from .cli import cmd_terminal
