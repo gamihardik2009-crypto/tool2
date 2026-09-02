@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="${XDG_DATA_HOME:-$HOME/.local/share}/telegram-x-manager"
+BASE="${XDG_DATA_HOME:-$HOME/.local/share}/telegram-x-manager-tool2"
 REPO="https://github.com/gamihardik2009-crypto/tool2.git"
 BIN="${XDG_BIN_HOME:-$HOME/.local/bin}"
 
