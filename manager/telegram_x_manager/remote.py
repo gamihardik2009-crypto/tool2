@@ -32,6 +32,22 @@ class ConnectionProfile:
     host: str
     username: str
     port: int = 22
+    alias: str = ""
+
+def find_profiles_for_host(host: str) -> list[ConnectionProfile]:
+    cfg = Path.home() / ".ssh" / "config"
+    if not cfg.is_file(): return []
+    result = []
+    for line in cfg.read_text(encoding="utf-8", errors="ignore").splitlines():
+        p = line.strip().split()
+        if len(p) != 2 or p[0].lower() != "host" or any(c in p[1] for c in "*?!"): continue
+        try:
+            raw = subprocess.check_output(["ssh", "-G", p[1]], text=True, stderr=subprocess.DEVNULL, timeout=5)
+            vals = dict(x.split(None, 1) for x in raw.splitlines() if len(x.split(None, 1)) == 2)
+            if vals.get("hostname") == host: result.append(ConnectionProfile(host, vals.get("user", ""), int(vals.get("port", 22)), p[1]))
+        except Exception: pass
+    return result
+
 
 
 def load_profile(path: Path | None = None) -> ConnectionProfile | None:
@@ -153,8 +169,8 @@ class Remote:
 
     def run(self, command: str, timeout: float = 30) -> tuple[int, str]:
         """Run a remote command; returns (exit_status, combined_output)."""
-        target = f"{self.profile.username}@{self.profile.host}"
-        args = ["ssh", "-p", str(self.profile.port), "-o", "BatchMode=yes", target, command]
+        target = self.profile.alias or f"{self.profile.username}@{self.profile.host}"
+        args = ["ssh"] + ([] if self.profile.alias else ["-p", str(self.profile.port)]) + ["-o", "BatchMode=yes", target, command]
         try:
             proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -163,20 +179,20 @@ class Remote:
 
     def interactive(self) -> int:
         """Replace this process with an interactive native SSH terminal."""
-        target = f"{self.profile.username}@{self.profile.host}"
-        args = ["ssh", "-p", str(self.profile.port), target]
+        target = self.profile.alias or f"{self.profile.username}@{self.profile.host}"
+        args = ["ssh"] + ([] if self.profile.alias else ["-p", str(self.profile.port)]) + [target]
         try:
             return subprocess.call(args)
         except OSError as exc:
             raise RemoteError(f"Could not start ssh: {exc}") from exc
 
     def put_bytes(self, data: bytes, remote_path: str) -> None:
-        target = f"{self.profile.username}@{self.profile.host}:{self._abs(remote_path)}"
+        target = f"{self.profile.alias or (self.profile.username + '@' + self.profile.host)}:{self._abs(remote_path)}"
         temporary = None
         try:
             temporary = tempfile.NamedTemporaryFile(delete=False)
             temporary.write(data); temporary.close()
-            proc = subprocess.run(["scp", "-P", str(self.profile.port), "-o", "BatchMode=yes", temporary.name, target], capture_output=True, text=True, timeout=30)
+            proc = subprocess.run(["scp"] + ([] if self.profile.alias else ["-P", str(self.profile.port)]) + ["-o", "BatchMode=yes", temporary.name, target], capture_output=True, text=True, timeout=30)
             if proc.returncode:
                 raise RemoteError((proc.stdout + proc.stderr).strip() or "scp upload failed")
         finally:

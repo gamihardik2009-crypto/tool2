@@ -18,6 +18,16 @@ def _run_action(index: int) -> None:
     if index == 1:
         from .cli import cmd_connect
         host = input("VPS IP/hostname: ").strip()
+        from .remote import find_profiles_for_host
+        matches = find_profiles_for_host(host)
+        if matches:
+            print("Matching SSH profiles:")
+            for i, item in enumerate(matches, 1): print(f"{i}. {item.alias} ({item.username}, port {item.port})")
+            selected = input("Select profile [1]: ").strip() or "1"
+            try: profile = matches[int(selected) - 1]
+            except (ValueError, IndexError): print("Invalid profile."); return
+            cmd_connect(type("Args", (), {"host": profile.host, "user": profile.username, "port": profile.port, "alias": profile.alias})())
+            return
         user = input("VPS SSH username [root]: ").strip() or "root"
         port_text = input("SSH port [22]: ").strip() or "22"
         try:

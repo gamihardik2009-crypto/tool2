@@ -63,7 +63,7 @@ def cmd_connect(args) -> int:
         if not host:
             raise SystemExit("Host is required.")
         port = args.port or 22
-        profile = ConnectionProfile(host=host, username=user, port=port)
+        profile = ConnectionProfile(host=host, username=user, port=port, alias=getattr(args, "alias", ""))
 
         username = verify_connection(profile)
         save_profile(profile)
