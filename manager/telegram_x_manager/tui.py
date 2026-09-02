@@ -17,7 +17,15 @@ def _run_action(index: int) -> None:
         return
     if index == 1:
         from .cli import cmd_connect
-        cmd_connect(type("Args", (), {"host": None, "user": None, "port": 22})())
+        host = input("VPS IP/hostname: ").strip()
+        user = input("VPS SSH username [root]: ").strip() or "root"
+        port_text = input("SSH port [22]: ").strip() or "22"
+        try:
+            port = int(port_text)
+        except ValueError:
+            print("SSH port must be a number.")
+            return
+        cmd_connect(type("Args", (), {"host": host, "user": user, "port": port})())
     elif index == 2:
         from .cli import cmd_creds
         cmd_creds(type("Args", (), {"token": None, "chat_id": None})())
