@@ -20,3 +20,4 @@ echo
 echo "Setup complete. Run the manager with:"
 echo "    ./.venv/bin/python -m telegram_x_manager --help"
 echo "    ./.venv/bin/telegram-x-manager tui"
+echo "    (or run: ./.venv/bin/telegram-x-manager)"
