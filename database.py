@@ -47,10 +47,21 @@ class MessageDatabase:
                     message_type TEXT NOT NULL,
                     sent_at TEXT NOT NULL,
                     collected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    publish_status TEXT NOT NULL DEFAULT 'pending',
+                    publish_url TEXT,
+                    last_error TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
                     UNIQUE(chat_id, message_id)
                 )
                 """
             )
+            # Lightweight migration for databases created by older versions.
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(messages)")}
+            for name, definition in (("publish_status", "TEXT NOT NULL DEFAULT 'pending'"),
+                                     ("publish_url", "TEXT"), ("last_error", "TEXT"),
+                                     ("attempts", "INTEGER NOT NULL DEFAULT 0")):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE messages ADD COLUMN {name} {definition}")
 
     def save(self, message: StoredMessage) -> bool:
         """Persist a message. Returns False when it was already collected."""
@@ -79,3 +90,11 @@ class MessageDatabase:
         with self.connect() as connection:
             row = connection.execute("SELECT COUNT(*) FROM messages").fetchone()
             return row[0] if row else 0
+
+    def mark_posted(self, message: StoredMessage, url: str) -> None:
+        with self.connect() as connection:
+            connection.execute("UPDATE messages SET publish_status='posted', publish_url=?, attempts=attempts+1 WHERE chat_id=? AND message_id=?", (url, message.chat_id, message.message_id))
+
+    def mark_failed(self, message: StoredMessage, error: str) -> None:
+        with self.connect() as connection:
+            connection.execute("UPDATE messages SET publish_status='failed', last_error=?, attempts=attempts+1 WHERE chat_id=? AND message_id=?", (error[:500], message.chat_id, message.message_id))

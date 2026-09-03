@@ -58,10 +58,19 @@ def cmd_connect(args) -> int:
     from .remote import ConnectionProfile, save_profile, verify_connection
 
     try:
-        host = args.host or input("VPS IP/hostname: ").strip()
-        user = args.user or input("VPS SSH username [root]: ").strip() or "root"
+        host = args.host or input("VPS IP/hostname or SSH alias: ").strip()
         if not host:
             raise SystemExit("Host is required.")
+        from .remote import find_profiles_for_host
+        matches = find_profiles_for_host(host)
+        if matches and not args.user and getattr(args, "port", 22) == 22:
+            profile = matches[0]
+            username = verify_connection(profile)
+            save_profile(profile)
+            activity.record("connect", True, f"verified SSH config profile {profile.alias}")
+            print(f"Connected using SSH profile '{profile.alias}' ({username}@{profile.host}:{profile.port}).")
+            return 0
+        user = args.user or input("VPS SSH username [root]: ").strip() or "root"
         port = args.port or 22
         profile = ConnectionProfile(host=host, username=user, port=port, alias=getattr(args, "alias", ""))
 

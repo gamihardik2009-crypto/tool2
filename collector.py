@@ -14,6 +14,7 @@ from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 from database import StoredMessage
+from database import MessageDatabase
 from x_publisher import XPublisher
 from health import HealthState
 
@@ -67,7 +68,8 @@ def build_stored_message(message: Message) -> StoredMessage:
 
 
 def create_message_handler(
-    allowed_chat_id: int | None, publisher: XPublisher, health: HealthState
+    allowed_chat_id: int | None, publisher: XPublisher, health: HealthState,
+    database: MessageDatabase,
 ):
     async def handle_message(
         update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -85,6 +87,9 @@ def create_message_handler(
             return
 
         stored = build_stored_message(message)
+        if not database.save(stored):
+            LOGGER.info("Ignoring duplicate Telegram message %s", message.message_id)
+            return
         print(
             "\n--- Telegram message ---\n"
             f"message_id: {stored.message_id}\n"
@@ -115,18 +120,21 @@ def create_message_handler(
                 )
 
             if result.get("ok"):
+                database.mark_posted(stored, result["url"])
                 LOGGER.info("Posted to X: %s", result["url"])
                 health.update(
                     "running", last_post_url=result["url"],
                     telegram_message_id=message.message_id,
                 )
             else:
+                database.mark_failed(stored, str(result.get("error", result)))
                 LOGGER.error("X rejected the post: %s", result.get("error", result))
                 health.update(
                     "post_failed", error=result.get("error", str(result)),
                     telegram_message_id=message.message_id,
                 )
         except Exception:
+            database.mark_failed(stored, "Unexpected X publishing error")
             LOGGER.exception(
                 "Could not post Telegram message %s to X", message.message_id
             )

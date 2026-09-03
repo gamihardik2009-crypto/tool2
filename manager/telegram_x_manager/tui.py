@@ -121,8 +121,6 @@ def _main(stdscr) -> None:
             print("\nProcess is running. Please wait; terminal input is paused until it finishes...\n")
             try: _run_action(selection)
             except Exception as exc: print(f"Error: {exc}")
-            # X login uses a separate browser and can return directly. Requiring
-            # a terminal Enter here is unreliable while Chrome has focus.
             if selection != 3:
                 input("\nPress Enter to return to the TUI...")
             try:

@@ -14,6 +14,7 @@ from collector import create_message_handler, handle_error
 from config import load_settings
 from x_publisher import XPublisher
 from health import HealthState
+from database import MessageDatabase
 
 
 def main() -> int:
@@ -28,6 +29,8 @@ def main() -> int:
     application = Application.builder().token(settings.bot_token).build()
     publisher = XPublisher(settings.x_session_path)
     health = HealthState(settings.health_path)
+    database = MessageDatabase(settings.database_path)
+    database.initialize()
     health.update("running", x_user_id=publisher.user_id)
     logging.info("X session ready for user ID %s", publisher.user_id or "unknown")
 
@@ -35,7 +38,7 @@ def main() -> int:
     application.add_handler(
         MessageHandler(
             filters.TEXT | filters.PHOTO,
-            create_message_handler(settings.chat_id, publisher, health),
+            create_message_handler(settings.chat_id, publisher, health, database),
         )
     )
     application.add_error_handler(handle_error)
