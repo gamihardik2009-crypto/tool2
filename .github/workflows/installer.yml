@@ -1,0 +1,41 @@
+name: Installer smoke tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  manager-install:
+    name: Manager install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: manager
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install manager (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./setup.sh
+      - name: Install manager (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./setup.ps1
+      - name: Verify installed CLI and browser detection
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            .venv/Scripts/python.exe -c "from telegram_x_manager.browser import detect_browser_binary; print(detect_browser_binary())"
+            .venv/Scripts/telegram-x-manager.exe --help
+          else
+            .venv/bin/python -c "from telegram_x_manager.browser import detect_browser_binary; print(detect_browser_binary())"
+            .venv/bin/telegram-x-manager --help
+          fi
