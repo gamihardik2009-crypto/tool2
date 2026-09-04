@@ -1,12 +1,17 @@
 """Offline checks for remote/SSH helpers, credentials, profile and activity.
 
-These validate the non-network parts of the SSH layer (key generation, profile
-round-trip, shell-quoting) plus credential storage and the activity-history log.
-A live SSH server connection is not exercised here.
+These validate the non-network parts of the SSH layer (shell-quoting, profile
+round-trip) plus credential storage and the activity-history log. A live SSH
+server connection is not exercised here.
+
+Key generation is no longer manager-managed: SSH now uses the user's native
+OpenSSH key/config, so `ensure_keypair` is disabled and raises. We assert that
+disabled behavior instead of trying to generate a keypair. POSIX `chmod` checks
+are guarded so the suite also runs green on Windows.
 """
 from __future__ import annotations
 
-import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -15,20 +20,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from telegram_x_manager import activity, creds
 from telegram_x_manager.remote import (
-    ConnectionProfile, ensure_keypair, load_profile, save_profile, quote,
+    ConnectionProfile, RemoteError, ensure_keypair, load_profile, save_profile, quote,
 )
 
 tmp = Path(tempfile.mkdtemp(prefix="tzx-remote-"))
 
-# 1. SSH key generation is idempotent and produces a valid public line.
-key, pub = ensure_keypair()
-assert key.exists(), "private key not created"
-assert pub.startswith("ssh-"), f"bad public key: {pub!r}"
-mode = key.stat().st_mode & 0o777
-assert mode == 0o600, f"private key mode {oct(mode)} (expected 600)"
-key2, pub2 = ensure_keypair()  # re-run reuses the same key
-assert pub == pub2, "keypair was regenerated instead of reused"
-print("OK ensure_keypair (created, chmod 600, idempotent)")
+# 1. Key generation is disabled now (native OpenSSH owns keys).
+try:
+    ensure_keypair()
+    raise AssertionError("ensure_keypair() should raise (key gen is disabled)")
+except RemoteError:
+    print("OK ensure_keypair is disabled (native OpenSSH handles keys)")
 
 # 2. Shell quoting prevents injection.
 assert quote("bitwalker's data; rm -rf ~") == "'bitwalker'\\''s data; rm -rf ~'"
@@ -46,8 +48,11 @@ c = tmp / "creds.json"
 creds.save("123456:ABC-SECRET-TOKEN", "-100123456", c)
 assert creds.bot_token(c) == "123456:ABC-SECRET-TOKEN"
 assert creds.chat_id(c) == "-100123456"
-assert (c.stat().st_mode & 0o777) == 0o600
-print("OK creds save/load (chmod 600)")
+if os.name != "nt":  # POSIX enforces 0600; Windows has no POSIX mode bits.
+    assert (c.stat().st_mode & 0o777) == 0o600
+    print("OK creds save/load (chmod 600)")
+else:
+    print("OK creds save/load (Windows: no POSIX mode-bit check)")
 
 # 5. Activity history is trimmed to the newest N (default 10).
 hist = tmp / "activity.json"

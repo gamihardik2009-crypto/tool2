@@ -41,3 +41,17 @@ jobs:
             .venv/bin/python -c "from telegram_x_manager.browser import detect_browser_binary; print(detect_browser_binary())"
             .venv/bin/telegram-x-manager --help
           fi
+      - name: Run manager test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            PY=".venv/Scripts/python.exe"
+          else
+            PY=".venv/bin/python"
+          fi
+          for t in tests/test_remote_offline.py tests/test_provisioning.py \
+                   tests/test_session_offline.py tests/test_cdp.py; do
+            echo "=== $t ==="
+            "$PY" "$t"
+          done
