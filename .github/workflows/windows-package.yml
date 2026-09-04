@@ -44,6 +44,10 @@ jobs:
           New-Item -ItemType Directory -Force client-package | Out-Null
           Copy-Item dist/tool2.exe client-package/tool2.exe
           @'
+          @echo off
+          "%~dp0tool2.exe" %*
+          '@ | Set-Content client-package/tool2.cmd -Encoding ascii
+          @'
           Telegram-X Manager
 
           Run tool2.exe. It starts the local service and opens the web dashboard.
@@ -58,7 +62,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force runtime-test | Out-Null
           Expand-Archive -Path tool2-windows.zip -DestinationPath runtime-test -Force
-          $process = Start-Process -FilePath runtime-test/tool2.exe -PassThru
+          $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'runtime-test\tool2.cmd' -PassThru
           try {
             $ready = $false
             for ($i = 0; $i -lt 30; $i++) {
