@@ -1,0 +1,64 @@
+name: Windows web app package
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  package:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: manager
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pyinstaller
+
+      - name: Build tool2.exe
+        working-directory: manager
+        run: >-
+          pyinstaller --clean --noconfirm --onefile --console
+          --name tool2 --collect-submodules telegram_x_manager launcher.py
+
+      - name: Smoke test executable
+        working-directory: manager
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist/tool2.exe)) { throw 'tool2.exe was not created' }
+          $size = (Get-Item dist/tool2.exe).Length
+          if ($size -lt 1000000) { throw "tool2.exe is unexpectedly small: $size bytes" }
+          Write-Host "Created tool2.exe ($size bytes)"
+
+      - name: Create client ZIP
+        working-directory: manager
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force client-package | Out-Null
+          Copy-Item dist/tool2.exe client-package/tool2.exe
+          @'
+          Telegram-X Manager
+
+          Run tool2.exe. It starts the local service and opens the web dashboard.
+          A Chrome, Edge, or Chromium browser and SSH access to the VPS are required.
+          Your configuration is stored in your Windows user profile.
+          '@ | Set-Content client-package/README.txt
+          Compress-Archive -Path client-package/* -DestinationPath tool2-windows.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tool2-windows
+          path: manager/tool2-windows.zip
+
+      - name: Attach ZIP to GitHub release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: manager/tool2-windows.zip
