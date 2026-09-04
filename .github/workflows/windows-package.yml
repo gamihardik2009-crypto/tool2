@@ -52,6 +52,31 @@ jobs:
           '@ | Set-Content client-package/README.txt
           Compress-Archive -Path client-package/* -DestinationPath tool2-windows.zip -Force
 
+      - name: Test packaged app on Windows
+        working-directory: manager
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force runtime-test | Out-Null
+          Expand-Archive -Path tool2-windows.zip -DestinationPath runtime-test -Force
+          $process = Start-Process -FilePath runtime-test/tool2.exe -PassThru
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 1
+              try {
+                $response = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/' -UseBasicParsing -TimeoutSec 3
+                if ($response.StatusCode -eq 200 -and $response.Content -match 'Telegram-X Manager') {
+                  $ready = $true
+                  Write-Host 'Packaged tool2.exe served the web dashboard successfully.'
+                  break
+                }
+              } catch { }
+            }
+            if (-not $ready) { throw 'tool2.exe did not serve the dashboard within 30 seconds' }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: tool2-windows
